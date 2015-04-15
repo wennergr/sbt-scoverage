@@ -26,6 +26,7 @@ class ScoverageSbtPlugin extends sbt.AutoPlugin {
     val coverageOutputXML = settingKey[Boolean]("enables xml report generation")
     val coverageOutputHTML = settingKey[Boolean]("enables html report generation")
     val coverageOutputDebug = settingKey[Boolean]("turn on the debug report")
+    val coverageOutputTeamCity = settingKey[Boolean]("turn on teamcity reporting")
     val coverageCleanSubprojectFiles = settingKey[Boolean]("removes subproject data after an aggregation")
   }
 
@@ -56,6 +57,7 @@ class ScoverageSbtPlugin extends sbt.AutoPlugin {
           coverageOutputXML.value,
           coverageOutputHTML.value,
           coverageOutputDebug.value,
+          coverageOutputTeamCity.value,
           s)
         case None => s.log.warn("No coverage data, skipping reports")
       }
@@ -79,6 +81,7 @@ class ScoverageSbtPlugin extends sbt.AutoPlugin {
             coverageOutputXML.value,
             coverageOutputHTML.value,
             coverageOutputDebug.value,
+            coverageOutputTeamCity.value,
             s)
           val cfmt = cov.statementCoverageFormatted
           s.log.info(s"Aggregation complete. Coverage was [$cfmt]")
@@ -117,6 +120,7 @@ class ScoverageSbtPlugin extends sbt.AutoPlugin {
     coverageOutputCobertua := true,
     coverageOutputDebug := false,
     coverageCleanSubprojectFiles := true,
+    coverageOutputTeamCity := sys.env.get("TEAMCITY_VERSION").isDefined,
 
     // disable parallel execution to work around "classes.bak" bug in SBT
     parallelExecution in Test := false,
@@ -125,8 +129,8 @@ class ScoverageSbtPlugin extends sbt.AutoPlugin {
   )
 
   private def postTestReport = {
-    (crossTarget, baseDirectory, scalaSource in Compile, coverageMinimum, coverageFailOnMinimum, coverageOutputCobertua, coverageOutputXML, coverageOutputHTML, coverageOutputDebug, streams in Global) map {
-      (target, baseDirectory, compileSource, min, failOnMin, outputCobertua, outputXML, outputHTML, coverageDebug, streams) =>
+    (crossTarget, baseDirectory, scalaSource in Compile, coverageMinimum, coverageFailOnMinimum, coverageOutputCobertua, coverageOutputXML, coverageOutputHTML, coverageOutputDebug, coverageOutputTeamCity, streams in Global) map {
+      (target, baseDirectory, compileSource, min, failOnMin, outputCobertua, outputXML, outputHTML, coverageDebug, outputTeamcity, streams) =>
         Tests.Cleanup {
           () => if (enabled) {
             loadCoverage(target, streams) foreach {
@@ -139,6 +143,7 @@ class ScoverageSbtPlugin extends sbt.AutoPlugin {
                   outputXML,
                   outputHTML,
                   coverageDebug,
+                  outputTeamcity,
                   streams)
                 checkCoverage(c, streams, min, failOnMin)
             }
@@ -175,6 +180,7 @@ class ScoverageSbtPlugin extends sbt.AutoPlugin {
                            coverageOutputXML: Boolean,
                            coverageOutputHTML: Boolean,
                            coverageDebug: Boolean,
+                           coverageOutputTeamCity: Boolean,
                            s: TaskStreams): Unit = {
     s.log.info(s"Generating scoverage reports...")
 
@@ -201,7 +207,35 @@ class ScoverageSbtPlugin extends sbt.AutoPlugin {
       new ScoverageHtmlWriter(compileSourceDirectory, reportDir).write(coverage)
     }
 
+    if (coverageOutputTeamCity) {
+      s.log.info("Writing coverage report to teamcity")
+      reportToTeamcity(coverage, coverageOutputHTML, reportDir, crossTarget, s)
+    }
+
+    s.log.info(s"Statement coverage.: ${coverage.statementCoverageFormatted}%")
+    s.log.info(s"Branch coverage....: ${coverage.branchCoverageFormatted}}%")
     s.log.info("Coverage reports completed")
+  }
+
+  private def reportToTeamcity(coverage: Coverage,
+                               createCoverageZip: Boolean,
+                               reportDir: File,
+                               crossTarget: File,
+                               s: TaskStreams) {
+
+    // Teamcity only have a definition of line/method and class coverage
+
+    // Log branch coverage as line coverage
+    s.log.info(s"##teamcity[buildStatisticValue key='CodeCoverageAbsMCovered' value='${coverage.invokedStatementCount}']")
+    s.log.info(s"##teamcity[buildStatisticValue key='CodeCoverageAbsMTotal' value='${coverage.statementCount}']")
+
+    // Log statement coverage as method coverage
+    s.log.info(s"##teamcity[buildStatisticValue key='CodeCoverageAbsLCovered' value='${coverage.invokedBranchesCount}']")
+    s.log.info(s"##teamcity[buildStatisticValue key='CodeCoverageAbsLTotal' value='${coverage.branchCount}']")
+
+    // Create the coverage report for teamcity (HTML files)
+    if (createCoverageZip)
+      IO.zip(Path.allSubpaths(reportDir), crossTarget / "coverage.zip")
   }
 
   private def loadCoverage(crossTarget: File, s: TaskStreams): Option[Coverage] = {
