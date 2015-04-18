@@ -213,7 +213,7 @@ class ScoverageSbtPlugin extends sbt.AutoPlugin {
     }
 
     s.log.info(s"Statement coverage.: ${coverage.statementCoverageFormatted}%")
-    s.log.info(s"Branch coverage....: ${coverage.branchCoverageFormatted}}%")
+    s.log.info(s"Branch coverage....: ${coverage.branchCoverageFormatted}%")
     s.log.info("Coverage reports completed")
   }
 
@@ -236,6 +236,21 @@ class ScoverageSbtPlugin extends sbt.AutoPlugin {
     // Create the coverage report for teamcity (HTML files)
     if (createCoverageZip)
       IO.zip(Path.allSubpaths(reportDir), crossTarget / "coverage.zip")
+
+    // Create a json metadata file
+    val coverageData =
+      s"""
+        |{
+        |   "invokedStatementCount" : ${coverage.invokedStatementCount},
+        |   "statementCount" : ${coverage.statementCount},
+        |   "statementPercentage" : "${"%.0f".format(coverage.statementCoveragePercent)}",
+        |   "invokedBranchCount" : ${coverage.invokedBranchesCount},
+        |   "branchCount" : ${coverage.invokedBranchesCount},
+        |   "branchPercentage" : ${"%.0f".format(coverage.branchCoveragePercent)}
+        |}
+      """.stripMargin
+
+    IO.write(crossTarget / "coverageData.json", coverageData)
   }
 
   private def loadCoverage(crossTarget: File, s: TaskStreams): Option[Coverage] = {
